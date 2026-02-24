@@ -1,17 +1,18 @@
-// Package brain provides a GoBot v2 plugin that adds persistent memory,
+// Package brain provides a GoBot v2 plugin that adds robot state persistence,
 // LLM inference, proactive scheduling, fleet health monitoring,
-// human-in-the-loop confirmation flows, security monitoring, confidence-aware
-// routing, data lifecycle management, and browser automation to any GoBot robot.
+// human-in-the-loop confirmation flows, security policy enforcement,
+// confidence-aware task routing, data lifecycle management, and browser
+// automation to any GoBot robot.
 //
 // See the sub-packages for individual component documentation:
-//   - memory: namespace key-value store (Connection/Adaptor)
+//   - memory: namespace key-value state store (Connection/Adaptor)
 //   - inference: multi-model LLM fallback chain (Driver)
 //   - scheduler: proactive timers with escalation (Driver)
 //   - watchdog: fleet health monitoring (Driver)
 //   - hitl: human-in-the-loop confirmation (Driver)
-//   - guardian: security monitoring with policy enforcement (Driver)
-//   - routing: confidence-aware worker selection (Driver)
-//   - lifecycle: data retention and pruning (Driver)
+//   - guardian: security policy enforcement with audit logging (Driver)
+//   - routing: confidence-aware task routing (Driver)
+//   - lifecycle: data retention and automatic pruning (Driver)
 //   - browser: Chrome DevTools Protocol automation (Driver)
 package brain
 

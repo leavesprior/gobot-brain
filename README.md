@@ -1,26 +1,69 @@
-# gobot-brain
+<p align="center">
+  <h1 align="center">gobot-brain</h1>
+  <p align="center">
+    The missing operational layer for <a href="https://github.com/hybridgroup/gobot">GoBot</a> robots.
+    <br/>
+    Memory. Intelligence. Autonomy. Safety.
+  </p>
+</p>
 
-A community plugin for [GoBot v2](https://github.com/hybridgroup/gobot) that adds persistent memory, LLM reasoning, proactive scheduling, fleet health monitoring, human-in-the-loop confirmation flows, security monitoring, confidence-aware routing, data lifecycle management, and browser automation.
+<p align="center">
+  <a href="https://pkg.go.dev/github.com/leavesprior/gobot-brain"><img src="https://pkg.go.dev/badge/github.com/leavesprior/gobot-brain.svg" alt="Go Reference"></a>
+  <a href="https://github.com/leavesprior/gobot-brain/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://goreportcard.com/report/github.com/leavesprior/gobot-brain"><img src="https://goreportcard.com/badge/github.com/leavesprior/gobot-brain" alt="Go Report Card"></a>
+</p>
 
-GoBot provides hardware abstraction for 35+ robotics platforms. **gobot-brain** fills the gaps: state that survives restarts, AI-powered decision making, scheduled tasks with automatic escalation, health checks with alerting, safe confirmation gates for risky actions, security policy enforcement, intelligent task routing, data retention management, and browser control via Chrome DevTools Protocol.
+---
 
-## Architecture
+## The Problem
+
+GoBot gives you hardware abstraction for 35+ robotics platforms. That's the easy part.
+
+The hard part is everything else: your robot forgets its state on every restart. It can't reason about sensor data. It has no concept of "check this every 5 minutes and escalate if it keeps failing." There's no health monitoring across a fleet. No safety gate before a dangerous action. No way to route tasks to the best worker. No cleanup of old data. No browser automation for dashboards.
+
+You end up building the same operational plumbing for every project.
+
+**gobot-brain** is that plumbing — packaged as standard GoBot Adaptors and Drivers that plug in like any other component.
+
+## How It Works
 
 ```
-Robot
-├── Connection: memory.Adaptor    (namespace key-value store)
-└── Devices:
-    ├── inference.Driver           (LLM fallback chain)
-    ├── scheduler.Driver           (proactive timers + escalation)
-    ├── watchdog.Driver            (fleet health monitoring)
-    ├── hitl.Driver                (human-in-the-loop confirmation)
-    ├── guardian.Driver            (security monitoring + policy enforcement)
-    ├── routing.Driver             (confidence-aware worker selection)
-    ├── lifecycle.Driver           (data retention + pruning)
-    └── browser.Driver             (Chrome DevTools Protocol automation)
+┌─────────────────────────────────────────────────────────────────┐
+│                         Your Robot                              │
+│                                                                 │
+│  ┌──────────┐  "arm overheating"  ┌───────────┐                │
+│  │ Watchdog ├────────────────────►│ Inference  │ ◄── LLM chain  │
+│  │ (health) │                     │ (diagnose) │     Ollama →   │
+│  └────┬─────┘                     └─────┬──────┘     OpenAI     │
+│       │ unhealthy                       │ "check coolant"       │
+│       ▼                                 ▼                       │
+│  ┌──────────┐  "notify operator"  ┌──────────┐                 │
+│  │Scheduler ├────────────────────►│   HITL   │ ◄── webhook/    │
+│  │ (timers) │  escalate after 3x  │ (approve) │     Telegram    │
+│  └──────────┘                     └─────┬──────┘                │
+│                                         │ approved              │
+│                                         ▼                       │
+│  ┌──────────┐  "safe to move?"    ┌──────────┐                 │
+│  │ Guardian ├◄───────────────────►│ Routing  │ ◄── pick best   │
+│  │ (policy) │  enforce policies   │ (assign) │     worker      │
+│  └──────────┘                     └──────────┘                  │
+│       │                                                         │
+│       ▼                                                         │
+│  ┌──────────┐    prune expired    ┌──────────┐                 │
+│  │Lifecycle ├────────────────────►│ Browser  │ ◄── dashboard   │
+│  │ (retain) │    telemetry data   │  (CDP)   │     automation  │
+│  └──────────┘                     └──────────┘                  │
+│       │               │               │              │          │
+│       └───────────────┴───────────────┴──────────────┘          │
+│                               │                                 │
+│                        ┌──────┴──────┐                          │
+│                        │   Memory    │ ◄── persists everything  │
+│                        │  (state)    │     file / HTTP / RAM    │
+│                        └─────────────┘                          │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-The Memory Adaptor is the **Connection** (foundation). All eight Drivers use it for state persistence. Each component can be used independently or together via the `NewBrain` convenience constructor.
+**Memory** is the foundation — every driver persists its state through it. The other eight drivers build on each other: **Watchdog** detects a problem, **Inference** diagnoses it, **Scheduler** escalates if it persists, **HITL** gates the fix behind human approval, **Guardian** checks safety policies before acting, **Routing** picks the best worker, **Lifecycle** cleans up old data, and **Browser** automates dashboard interactions.
 
 ## Install
 
@@ -30,117 +73,133 @@ go get github.com/leavesprior/gobot-brain
 
 Requires Go 1.22+ and GoBot v2.
 
-## Quick Start
+## Real-World Example: Warehouse Pick Fleet
 
-### Memory + Inference (minimal)
-
-```go
-package main
-
-import (
-    "fmt"
-    "log"
-
-    "gobot.io/x/gobot/v2"
-
-    "github.com/leavesprior/gobot-brain/inference"
-    "github.com/leavesprior/gobot-brain/memory"
-)
-
-func main() {
-    mem := memory.NewAdaptor()
-    llm := inference.NewDriver(mem,
-        inference.NewOllamaProvider(inference.WithOllamaModel("llama3")),
-    )
-
-    robot := gobot.NewRobot("my-robot",
-        []gobot.Connection{mem},
-        []gobot.Device{llm},
-        func(r *gobot.Robot) {
-            mem.Store("config", "version", "1.0.0")
-
-            result, err := llm.Infer("What are the three laws of robotics?")
-            if err != nil {
-                log.Printf("inference error: %v", err)
-                return
-            }
-            fmt.Println(result)
-        },
-    )
-
-    if err := robot.Start(); err != nil {
-        log.Fatal(err)
-    }
-}
-```
-
-### Full Brain (all components)
+Here's how all nine components work together in a warehouse with multiple robot arms:
 
 ```go
-b := brain.NewBrain("smart-robot",
-    brain.WithMemoryOptions(memory.WithFileStore("/tmp/brain-data")),
+b := brain.NewBrain("warehouse-fleet",
+    // State survives restarts.
+    brain.WithMemoryOptions(memory.WithFileStore("/var/lib/robot/state")),
+
+    // Local LLM for diagnostics when things go wrong.
     brain.WithProviders(inference.NewOllamaProvider()),
+
+    // Inventory check every 5 min. Auto-escalates after 3 consecutive failures.
     brain.WithSchedulerOptions(
+        scheduler.WithEscalationThreshold(3),
         scheduler.WithTask(scheduler.Task{
-            Name:     "heartbeat",
-            Interval: 30 * time.Second,
-            Level:    scheduler.Silent,
-            Fn:       func() error { return nil },
+            Name: "inventory-check", Interval: 5 * time.Minute,
+            Level: scheduler.Silent, Fn: checkInventory,
         }),
     ),
-    brain.WithWatchdogAlert(func(name string, err error, n int) {
-        log.Printf("ALERT: %s failed %d times: %v", name, n, err)
-    }),
-    brain.WithHITLNotify(func(req hitl.Request) error {
-        log.Printf("Approval needed: %s", req.Description)
-        return nil
-    }),
+
+    // Fleet health monitoring. Alert on 2+ consecutive failures.
+    brain.WithWatchdogAlert(sendToPagerDuty),
+    brain.WithWatchdogOptions(watchdog.WithAlertAfter(2)),
+
+    // Firmware updates need human approval.
+    brain.WithHITLNotify(sendToTelegram),
+
+    // Safety: no arm movement while charging, warn on heavy payloads.
     brain.WithGuardianOptions(
-        guardian.WithPatternThreshold(3),
+        guardian.WithPolicy(noMoveWhileCharging),
+        guardian.WithPolicy(heavyPayloadWarning),
     ),
+
+    // Three arms. Route tasks to the most reliable one.
     brain.WithRoutingOptions(
-        routing.WithHalfLife(14 * 24 * time.Hour),
+        routing.WithWorker(routing.Worker{Name: "arm-alpha", Capabilities: []string{"pick", "place"}}),
+        routing.WithWorker(routing.Worker{Name: "arm-beta",  Capabilities: []string{"pick", "place"}}),
+        routing.WithWorker(routing.Worker{Name: "arm-gamma", Capabilities: []string{"pick", "place", "weld"}}),
+        routing.WithExplorationRate(0.1),
     ),
+
+    // Telemetry expires after 14 days. Config never expires.
     brain.WithLifecycleOptions(
-        lifecycle.WithRule(lifecycle.Rule{Pattern: "cache_*", Tier: lifecycle.TierEphemeral}),
-    ),
-    brain.WithBrowserOptions(
-        browser.WithDebugURL("http://localhost:9222"),
+        lifecycle.WithRule(lifecycle.Rule{Namespace: "telemetry", Tier: lifecycle.Telemetry}),
+        lifecycle.WithRule(lifecycle.Rule{Namespace: "config", Tier: lifecycle.Critical}),
     ),
 )
-
-if err := b.Robot.Start(); err != nil {
-    log.Fatal(err)
-}
 ```
 
-## Components
-
-### Memory Adaptor (`memory.Adaptor`)
-
-Namespace key-value store implementing `gobot.Connection`.
-
-**Backends:**
-- `InMemory` (default) — `sync.RWMutex`-protected map
-- `FileStore` — JSON files in a configurable directory
-- `HTTPStore` — any HTTP key-value API
+Then in the work loop, the components interact naturally:
 
 ```go
-mem := memory.NewAdaptor()                              // in-memory
-mem := memory.NewAdaptor(memory.WithFileStore("./data")) // file-backed
-mem := memory.NewAdaptor(memory.WithHTTPStore("http://localhost:8080")) // HTTP API
+brain.WithWork(func(r *gobot.Robot) {
+    gobot.Every(15*time.Second, func() {
+        // Route: pick the best arm for this task.
+        worker, _ := b.Routing.Route("pick")
 
-mem.Store("robots", "arm-1", map[string]any{"status": "active"})
-val, _ := mem.Retrieve("robots", "arm-1")
-keys, _ := mem.List("robots")
-mem.Delete("robots", "arm-1")
+        // Guard: check safety policies before moving.
+        err := b.Guardian.Guard(
+            guardian.Action{Name: "pick", Source: worker, Parameters: params},
+            func() error { return executePickOn(worker) },
+        )
+
+        // Report: feed the result back to improve future routing.
+        b.Routing.Report(routing.Result{
+            Worker: worker, TaskType: "pick",
+            Success: err == nil, Time: time.Now(),
+        })
+
+        // Track: register telemetry for lifecycle pruning.
+        b.Lifecycle.Track("telemetry", entryKey, lifecycle.Telemetry)
+    })
+
+    // When watchdog detects a problem, ask the LLM to diagnose it.
+    b.Watchdog.On("unhealthy", func(data interface{}) {
+        diagnosis, _ := b.Inference.InferWithFramework(
+            inference.ChainOfThought,
+            fmt.Sprintf("Robot arm health check failing: %v. Likely causes?", data),
+        )
+        log.Println(diagnosis)
+    })
+})
 ```
 
-**Events:** `"stored"`, `"retrieved"`, `"deleted"`, `"error"`
+See [`examples/warehouse/main.go`](examples/warehouse/main.go) for the complete runnable version.
 
-### Inference Driver (`inference.Driver`)
+## Components at a Glance
 
-Multi-model LLM fallback chain. Tries providers in order until one succeeds.
+| Component | What it does | GoBot type |
+|-----------|-------------|------------|
+| [**Memory**](#memory) | Namespace key-value store (in-memory, file, HTTP) | Connection |
+| [**Inference**](#inference) | LLM fallback chain with reasoning frameworks | Device |
+| [**Scheduler**](#scheduler) | Periodic tasks with 5-level auto-escalation | Device |
+| [**Watchdog**](#watchdog) | Fleet health checks with debounced alerting | Device |
+| [**HITL**](#hitl) | Human approval gates with auto-expiry | Device |
+| [**Guardian**](#guardian) | Security policy enforcement with audit trail | Device |
+| [**Routing**](#routing) | Confidence-aware task assignment (bandit algorithm) | Device |
+| [**Lifecycle**](#lifecycle) | Data retention tiers with automatic pruning | Device |
+| [**Browser**](#browser) | Chrome DevTools Protocol automation | Device |
+
+Every component publishes [GoBot events](#events), registers [commands](#commands), persists state through Memory, and can be used independently or wired together with `NewBrain()`.
+
+---
+
+## Memory
+
+Namespace key-value store. The foundation — all other drivers persist through it.
+
+```go
+mem := memory.NewAdaptor()                                        // in-memory
+mem := memory.NewAdaptor(memory.WithFileStore("./robot-state"))   // JSON files on disk
+mem := memory.NewAdaptor(memory.WithHTTPStore("http://kv:8080"))  // any HTTP API
+
+mem.Store("fleet", "arm-1", map[string]any{"status": "active", "temp": 42.3})
+val, _ := mem.Retrieve("fleet", "arm-1")
+keys, _ := mem.List("fleet")
+mem.Delete("fleet", "arm-1")
+```
+
+**Backends are pluggable** — implement `memory.Backend` to add Redis, etcd, or anything else.
+
+Events: `stored` `retrieved` `deleted` `error`
+
+## Inference
+
+Multi-model LLM fallback chain. First provider fails? Tries the next. Includes reasoning framework wrappers.
 
 ```go
 llm := inference.NewDriver(mem,
@@ -148,262 +207,204 @@ llm := inference.NewDriver(mem,
     inference.NewOpenAIProvider("sk-...", inference.WithOpenAIModel("gpt-4")),
 )
 
-result, err := llm.Infer("Analyze sensor readings")
-result, err = llm.InferWithFramework(inference.ChainOfThought, "Diagnose motor failure")
+result, _ := llm.Infer("Sensor reads 95C on motor 3. Is this normal?")
+result, _ = llm.InferWithFramework(inference.Adversarial, "Review safety of proposed arm trajectory")
 ```
 
-**Built-in providers:** Ollama (local), OpenAI-compatible (any API).
+**Frameworks:** `ChainOfThought` (step-by-step), `TreeOfThought` (branch and evaluate), `Adversarial` (find weaknesses), `ReAct` (reason-act-observe loop).
 
-**Reasoning frameworks:** `TreeOfThought`, `ChainOfThought`, `Adversarial`, `ReAct`.
+Events: `inference` `fallback` `error`
 
-**Events:** `"inference"`, `"fallback"`, `"error"`
+## Scheduler
 
-### Scheduler Driver (`scheduler.Driver`)
-
-Proactive timer system with automatic escalation on consecutive failures.
+Proactive timers that auto-escalate when tasks fail repeatedly.
 
 ```go
-sched := scheduler.NewDriver(mem,
-    scheduler.WithEscalationThreshold(3),
-    scheduler.WithTask(scheduler.Task{
-        Name:     "battery-check",
-        Interval: 1 * time.Minute,
-        Level:    scheduler.Silent,
-        Fn: func() error {
-            // check battery level
-            return nil
+sched := scheduler.NewDriver(mem, scheduler.WithEscalationThreshold(3))
+sched.Add(scheduler.Task{
+    Name: "battery-check", Interval: time.Minute, Level: scheduler.Silent,
+    Fn: func() error { return checkBattery() },
+})
+```
+
+Fails 3 times in a row? Escalates: **Silent** → **Notify** → **Urgent** → **Escalate** → **Critical**. Recovers automatically when the task starts passing again.
+
+Events: `tick` `escalation` `recovered` `error`
+
+## Watchdog
+
+Fleet health monitoring with debounced alerting. No alert spam — fires only after N consecutive failures.
+
+```go
+wd := watchdog.NewDriver(mem, alertFn, watchdog.WithAlertAfter(2))
+wd.AddCheck(watchdog.Check{
+    Name: "motor-temp", Interval: 10 * time.Second, Timeout: 5 * time.Second,
+    Fn: func() error { return readMotorTemp() },
+})
+
+wd.Healthy()  // true if all checks passing
+wd.Status()   // per-check details
+```
+
+Events: `healthy` `unhealthy` `recovered` `error`
+
+## HITL
+
+Human-in-the-loop confirmation. Risky action? Ask a human first. Auto-expires if nobody responds.
+
+```go
+h := hitl.NewDriver(mem, sendToTelegram)
+id, _ := h.RequestApproval(hitl.Request{
+    Description: "Deploy firmware v2.4.1 to all arms",
+    Timeout:     2 * time.Hour,
+    Action:      func() error { return deployFirmware() },
+})
+
+// Later, from webhook callback:
+h.Approve(id)  // runs the action
+h.Deny(id)     // blocks it
+```
+
+Events: `requested` `approved` `denied` `expired` `executed` `error`
+
+## Guardian
+
+Security policy enforcement. Define rules, gate actions, keep an audit trail.
+
+```go
+g := guardian.NewDriver(mem,
+    guardian.WithPolicy(guardian.Policy{
+        Name: "no-move-while-charging", Severity: guardian.Blocked,
+        Check: func(a guardian.Action) guardian.Decision {
+            if a.Name == "move_arm" && a.Parameters["charging"].(bool) {
+                return guardian.Decision{Allowed: false, Reason: "charging"}
+            }
+            return guardian.Decision{Allowed: true}
         },
     }),
 )
 
-sched.Add(scheduler.Task{Name: "cleanup", Interval: 5 * time.Minute, Fn: cleanupFn})
-sched.Pause("cleanup")
-sched.Resume("cleanup")
-sched.Remove("cleanup")
+// Gate execution behind policy check:
+err := g.Guard(action, func() error { return moveArm() })
+// Blocked actions never execute. Full audit trail in g.AuditLog().
 ```
 
-**Escalation levels:** `Silent` → `Notify` → `Urgent` → `Escalate` → `Critical`
+Severity levels: `Info` → `Warning` → `Critical` → `Blocked`. Worst policy wins.
 
-If a task fails N consecutive times, the level auto-escalates one step.
+Events: `evaluated` `blocked` `violation` `error`
 
-**Events:** `"tick"`, `"escalation"`, `"error"`, `"recovered"`
+## Routing
 
-### Watchdog Driver (`watchdog.Driver`)
-
-Fleet health monitoring with debounced alerting.
+Confidence-aware task assignment. Tracks success rates per worker, uses Laplace smoothing and recency weighting. Includes exploration (try new workers) and a delta guard (prevent oscillation).
 
 ```go
-wd := watchdog.NewDriver(mem,
-    func(name string, err error, consecutive int) {
-        log.Printf("ALERT: %s (failures: %d): %v", name, consecutive, err)
-    },
-    watchdog.WithAlertAfter(2),
-)
+r := routing.NewDriver(mem, routing.WithExplorationRate(0.1))
+r.Register(routing.Worker{Name: "arm-1", Capabilities: []string{"pick", "place"}})
+r.Register(routing.Worker{Name: "arm-2", Capabilities: []string{"pick", "place"}})
 
-wd.AddCheck(watchdog.Check{
-    Name:     "motor-temp",
-    Interval: 10 * time.Second,
-    Timeout:  5 * time.Second,
-    Fn: func() error {
-        // read motor temperature
-        return nil
-    },
-})
-
-status := wd.Status()     // map[string]CheckStatus
-allGood := wd.Healthy()   // true if all checks pass
+worker, _ := r.Route("pick")  // picks the best arm
+r.Report(routing.Result{Worker: worker, TaskType: "pick", Success: true})
+r.Scores("pick")              // {"arm-1": 0.72, "arm-2": 0.58}
 ```
 
-Alerts fire only after N consecutive failures (configurable debounce). Auto-recovers and publishes recovery events.
+**Scoring:** `(wins+1)/(wins+losses+2)` * recency decay. New workers get a fair 0.5 base score. 10% exploration rate means occasionally trying non-optimal workers to discover improvements.
 
-**Events:** `"healthy"`, `"unhealthy"`, `"recovered"`, `"error"`
+Events: `routed` `reported` `exploration` `error`
 
-### HITL Driver (`hitl.Driver`)
+## Lifecycle
 
-Confirmation flow for risky robot actions.
-
-```go
-h := hitl.NewDriver(mem, func(req hitl.Request) error {
-    // Send to Telegram, webhook, etc.
-    return sendNotification(req.Description)
-})
-
-id, _ := h.RequestApproval(hitl.Request{
-    Description: "Deploy firmware update",
-    Timeout:     2 * time.Hour,
-    Action: func() error {
-        return deployFirmware()
-    },
-})
-
-// Later, from a webhook callback:
-h.Approve(id)   // executes the action
-// or: h.Deny(id)
-
-pending := h.Pending() // list pending requests
-```
-
-Requests auto-expire after their timeout. Actions execute only on approval.
-
-**Events:** `"requested"`, `"approved"`, `"denied"`, `"expired"`, `"executed"`, `"error"`
-
-### Guardian Driver (`guardian.Driver`)
-
-Security monitoring with policy-based action filtering, pluggable probes, finding storage with pattern detection, and threat scoring.
-
-```go
-g := guardian.NewDriver(mem,
-    guardian.WithPatternThreshold(3),
-    guardian.WithEscalationThreshold(5),
-)
-
-// Add a policy to block dangerous actions.
-g.AddPolicy(guardian.Policy{
-    Name:        "no-force-push",
-    Pattern:     `git\s+push\s+--force`,
-    Risk:        guardian.RiskCritical,
-    Alternative: "use --force-with-lease instead",
-})
-
-// Check if an action is allowed before executing.
-allowed, denial := g.CheckAction("git push --force main")
-if !allowed {
-    log.Printf("Blocked: %s (risk: %s, try: %s)",
-        denial.Policy, denial.Risk, denial.Alternative)
-}
-
-// Add pluggable security probes.
-g.AddProbe(myPortScanner)
-g.AddProbe(myFilePermChecker)
-
-// Run all probes and detect patterns.
-findings, _ := g.Scan()
-
-// Set a baseline for drift detection.
-g.SetBaseline()
-
-// Get aggregate threat level (0-100).
-level := g.ThreatLevel()
-```
-
-Findings are scored by risk: critical +40, high +25, medium +10, low +5. Pattern detection triggers at 3+ identical findings; escalation at 5+.
-
-**Events:** `"finding"`, `"pattern_detected"`, `"escalation"`, `"policy_denied"`, `"scan_complete"`, `"baseline_drift"`, `"error"`
-
-### Routing Driver (`routing.Driver`)
-
-Confidence-aware worker/agent selection with colored flags, exponential decay scoring, Laplace-smoothed confidence, and a delta guard to prevent pathological swaps.
-
-```go
-r := routing.NewDriver(mem,
-    routing.WithHalfLife(14 * 24 * time.Hour),
-    routing.WithDeltaGuard(0.6),
-    routing.WithExplorationRate(0.1),
-)
-
-// Record outcomes.
-r.AddFlag(routing.Flag{Worker: "worker-a", TaskType: "build", Color: routing.Green})
-r.AddFlag(routing.Flag{Worker: "worker-b", TaskType: "build", Color: routing.Red})
-
-// Get the best worker for a task type.
-decision := r.BestWorker("build")
-fmt.Printf("Route to: %s (score: %.2f, confidence: %.2f, explored: %v)\n",
-    decision.Worker, decision.Score, decision.Confidence, decision.Explored)
-
-// Get full ranking.
-ranking := r.Ranking("build")
-
-// Check confidence for a specific worker.
-conf := r.Confidence("worker-a", "build")
-```
-
-**Scoring:** Green flags +2, red -2, yellow 0 — all with exponential decay (14-day half-life default). Confidence uses Laplace smoothing: `(greens+1)/(total+2)`. Delta guard prevents swapping to a 2nd-place worker unless its score exceeds 1st × 0.6.
-
-**Events:** `"routed"`, `"explored"`, `"flag_added"`, `"error"`
-
-### Lifecycle Driver (`lifecycle.Driver`)
-
-Data retention management with tiered classification, age tracking, stale detection, and automatic pruning.
+Data retention with automatic pruning. Six tiers, background cleanup, prevents unbounded growth.
 
 ```go
 lc := lifecycle.NewDriver(mem,
-    lifecycle.WithRule(lifecycle.Rule{Pattern: "critical_*", Tier: lifecycle.TierCritical}),
-    lifecycle.WithRule(lifecycle.Rule{Pattern: "cache_*",    Tier: lifecycle.TierEphemeral}),
-    lifecycle.WithRule(lifecycle.Rule{Pattern: "logs_*",     Tier: lifecycle.TierLow}),
-    lifecycle.WithDefaultTier(lifecycle.TierMedium),
+    lifecycle.WithRule(lifecycle.Rule{Namespace: "telemetry", Tier: lifecycle.Telemetry}),
+    lifecycle.WithRule(lifecycle.Rule{Namespace: "config",    Tier: lifecycle.Critical}),
+    lifecycle.WithPruneInterval(10 * time.Minute),
 )
-
-// Track data entries (can also auto-track via memory events).
-lc.Track("cache_sessions", "user-123")
-lc.Track("critical_config", "db-url")
-
-// Check how old an entry is.
-age := lc.Age("cache_sessions", "user-123")
-
-// Audit current state.
-report := lc.Audit()
-fmt.Printf("Total: %d, Stale: %d\n", report.TotalEntries, report.StaleCount)
-
-// Prune expired entries.
-result := lc.Prune()
-fmt.Printf("Pruned %d entries\n", result.Removed)
+lc.Track("telemetry", "reading-001", lifecycle.Telemetry)
 ```
 
-**Tiers:** Critical (never expires), High (90 days), Medium (30 days), Low (7 days), Ephemeral (3 days).
+| Tier | TTL | Use case |
+|------|-----|----------|
+| Critical | Never | Configuration, calibration data |
+| High | 90 days | Task history, performance logs |
+| Medium | 30 days | General operational data |
+| Low | 7 days | Debug logs, temporary state |
+| Ephemeral | 3 days | Session data, scratch values |
+| Telemetry | 14 days | Sensor readings, metrics |
 
-**Events:** `"pruned"`, `"stale_detected"`, `"audit_complete"`, `"error"`
+Events: `pruned` `prune_complete` `error`
 
-### Browser Driver (`browser.Driver`)
+## Browser
 
-Browser automation via Chrome DevTools Protocol: tab management, navigation, element interaction with human-like timing, content inspection, and JavaScript evaluation.
+Chrome DevTools Protocol automation via a pluggable Transport. No websocket dependency — bring your own.
 
 ```go
 br := browser.NewDriver(mem,
-    browser.WithDebugURL("http://localhost:9222"),
-    browser.WithCommandTimeout(10 * time.Second),
-    browser.WithHumanDelay(50*time.Millisecond, 150*time.Millisecond),
+    browser.WithTransport(myTransport),
+    browser.WithEndpoint("ws://localhost:9222"),
 )
-
-// List open tabs.
-tabs, _ := br.ListTabs()
-
-// Navigate to a URL.
-br.Navigate(tabs[0].ID, "http://example.com")
-
-// Click an element (with human-like delay).
-br.Click(tabs[0].ID, "#submit-button")
-
-// Type text character by character.
-br.Type(tabs[0].ID, "#search-input", "hello world")
-
-// Press a key with modifiers.
-br.PressKey(tabs[0].ID, "Enter")
-br.PressKey(tabs[0].ID, "j", "ctrl")
-
-// Wait for an element to appear.
-br.WaitForElement(tabs[0].ID, ".results", browser.WaitVisible, 5*time.Second)
-
-// Wait for text content.
-br.WaitForElementWithText(tabs[0].ID, "#status", browser.WaitTextContains, "complete", 10*time.Second)
-
-// Get accessibility tree snapshot.
-snap, _ := br.Snapshot(tabs[0].ID)
-
-// Take a screenshot.
-png, _ := br.Screenshot(tabs[0].ID)
-
-// Evaluate JavaScript.
-result, _ := br.Eval(tabs[0].ID, "document.title")
+br.Navigate("http://warehouse-dashboard.local")
+br.WaitFor(".order-table", 5*time.Second)
+br.Click("#refresh-button")
+title, _ := br.Eval("document.title")
+png, _ := br.Screenshot()
 ```
 
-Requires Chrome/Chromium running with `--remote-debugging-port=9222`. Human-like delays are added between interactions to avoid detection by anti-automation systems.
+```go
+// Implement this interface to connect to Chrome:
+type Transport interface {
+    Connect(endpoint string) error
+    Close() error
+    Send(method string, params map[string]interface{}) (json.RawMessage, error)
+}
+```
 
-**Events:** `"navigated"`, `"clicked"`, `"typed"`, `"waited"`, `"error"`
+Events: `navigated` `evaluated` `clicked` `screenshot` `error`
 
-## Custom Backends
+---
 
-Implement the `memory.Backend` interface to add your own storage:
+## Events
 
+All drivers publish events through GoBot's standard `Eventer` interface. Wire them together:
+
+```go
+// Watchdog detects failure → Inference diagnoses → HITL requests approval
+b.Watchdog.On("unhealthy", func(data interface{}) {
+    diagnosis, _ := b.Inference.Infer(fmt.Sprintf("Motor failing: %v. Cause?", data))
+    b.HITL.RequestApproval(hitl.Request{
+        Description: fmt.Sprintf("Motor repair needed: %s", diagnosis),
+        Action:      func() error { return repairMotor() },
+    })
+})
+
+// Guardian blocks something → log to audit
+b.Guardian.On("blocked", func(data interface{}) {
+    log.Printf("Security policy blocked an action: %v", data)
+})
+
+// Routing explores → track for analysis
+b.Routing.On("exploration", func(data interface{}) {
+    log.Printf("Exploration pick: %v", data)
+})
+```
+
+## Commands
+
+All drivers register commands via GoBot's `Commander` interface, making them accessible through GoBot's REST API:
+
+```go
+// Each driver exposes commands:
+b.Inference.Command("infer")     // run inference
+b.Guardian.Command("evaluate")   // check a policy
+b.Routing.Command("route")       // route a task
+b.Lifecycle.Command("prune")     // trigger manual prune
+b.Watchdog.Command("status")     // get health status
+```
+
+## Extensibility
+
+**Custom memory backend:**
 ```go
 type Backend interface {
     Init() error
@@ -413,56 +414,36 @@ type Backend interface {
     Delete(namespace, key string) error
     List(namespace string) ([]string, error)
 }
-
-mem := memory.NewAdaptor(memory.WithBackend(myCustomBackend))
+mem := memory.NewAdaptor(memory.WithBackend(myRedisBackend))
 ```
 
-## Custom LLM Providers
-
-Implement the `inference.Provider` interface:
-
+**Custom LLM provider:**
 ```go
 type Provider interface {
     Name() string
     Infer(ctx context.Context, prompt string, opts ...InferOption) (string, error)
 }
+llm := inference.NewDriver(mem, myCustomProvider)
 ```
 
-## Custom Security Probes
-
-Implement the `guardian.Probe` interface:
-
+**Custom browser transport:**
 ```go
-type Probe interface {
-    Name() string
-    Run() ([]guardian.Finding, error)
+type Transport interface {
+    Connect(endpoint string) error
+    Close() error
+    Send(method string, params map[string]interface{}) (json.RawMessage, error)
 }
+br := browser.NewDriver(mem, browser.WithTransport(myWSTransport))
 ```
 
-## Events
+## Project Status
 
-All drivers publish events via GoBot's `Eventer` interface:
-
-```go
-llm.On("inference", func(data interface{}) {
-    fmt.Println("Got result:", data)
-})
-
-llm.On("fallback", func(data interface{}) {
-    fmt.Println("Provider failed, trying next:", data)
-})
-
-g.On("policy_denied", func(data interface{}) {
-    denial := data.(guardian.PolicyDenial)
-    fmt.Printf("Blocked: %s\n", denial.Action)
-})
-
-r.On("routed", func(data interface{}) {
-    decision := data.(routing.Decision)
-    fmt.Printf("Routed to: %s\n", decision.Worker)
-})
-```
+- 9 components, all implementing standard GoBot v2 interfaces
+- 120+ unit tests, all passing
+- `go vet` and `go build` clean
+- Zero external dependencies beyond GoBot v2 and Go stdlib
+- Apache 2.0 licensed
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+[Apache License 2.0](LICENSE)
