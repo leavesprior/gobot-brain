@@ -1,6 +1,7 @@
 // Package brain provides a GoBot v2 plugin that adds persistent memory,
-// LLM inference, proactive scheduling, fleet health monitoring, and
-// human-in-the-loop confirmation flows to any GoBot robot.
+// LLM inference, proactive scheduling, fleet health monitoring,
+// human-in-the-loop confirmation flows, security monitoring, confidence-aware
+// routing, data lifecycle management, and browser automation to any GoBot robot.
 //
 // See the sub-packages for individual component documentation:
 //   - memory: namespace key-value store (Connection/Adaptor)
@@ -8,14 +9,22 @@
 //   - scheduler: proactive timers with escalation (Driver)
 //   - watchdog: fleet health monitoring (Driver)
 //   - hitl: human-in-the-loop confirmation (Driver)
+//   - guardian: security monitoring with policy enforcement (Driver)
+//   - routing: confidence-aware worker selection (Driver)
+//   - lifecycle: data retention and pruning (Driver)
+//   - browser: Chrome DevTools Protocol automation (Driver)
 package brain
 
 import (
 	"gobot.io/x/gobot/v2"
 
+	"github.com/leavesprior/gobot-brain/browser"
+	"github.com/leavesprior/gobot-brain/guardian"
 	"github.com/leavesprior/gobot-brain/hitl"
 	"github.com/leavesprior/gobot-brain/inference"
+	"github.com/leavesprior/gobot-brain/lifecycle"
 	"github.com/leavesprior/gobot-brain/memory"
+	"github.com/leavesprior/gobot-brain/routing"
 	"github.com/leavesprior/gobot-brain/scheduler"
 	"github.com/leavesprior/gobot-brain/watchdog"
 )
@@ -28,6 +37,10 @@ type Brain struct {
 	Scheduler *scheduler.Driver
 	Watchdog  *watchdog.Driver
 	HITL      *hitl.Driver
+	Guardian  *guardian.Driver
+	Routing   *routing.Driver
+	Lifecycle *lifecycle.Driver
+	Browser   *browser.Driver
 	Robot     *gobot.Robot
 }
 
@@ -41,6 +54,10 @@ type brainConfig struct {
 	watchdogAlert watchdog.AlertFunc
 	watchdogOpts  []watchdog.DriverOption
 	hitlNotify    hitl.NotifyFunc
+	guardianOpts  []guardian.Option
+	routingOpts   []routing.Option
+	lifecycleOpts []lifecycle.Option
+	browserOpts   []browser.Option
 	extraDevices  []gobot.Device
 	extraConns    []gobot.Connection
 	work          func(*gobot.Robot)
@@ -85,6 +102,34 @@ func WithWatchdogOptions(opts ...watchdog.DriverOption) BrainOption {
 func WithHITLNotify(fn hitl.NotifyFunc) BrainOption {
 	return func(c *brainConfig) {
 		c.hitlNotify = fn
+	}
+}
+
+// WithGuardianOptions sets options for the guardian driver.
+func WithGuardianOptions(opts ...guardian.Option) BrainOption {
+	return func(c *brainConfig) {
+		c.guardianOpts = append(c.guardianOpts, opts...)
+	}
+}
+
+// WithRoutingOptions sets options for the routing driver.
+func WithRoutingOptions(opts ...routing.Option) BrainOption {
+	return func(c *brainConfig) {
+		c.routingOpts = append(c.routingOpts, opts...)
+	}
+}
+
+// WithLifecycleOptions sets options for the lifecycle driver.
+func WithLifecycleOptions(opts ...lifecycle.Option) BrainOption {
+	return func(c *brainConfig) {
+		c.lifecycleOpts = append(c.lifecycleOpts, opts...)
+	}
+}
+
+// WithBrowserOptions sets options for the browser driver.
+func WithBrowserOptions(opts ...browser.Option) BrainOption {
+	return func(c *brainConfig) {
+		c.browserOpts = append(c.browserOpts, opts...)
 	}
 }
 
@@ -135,10 +180,15 @@ func NewBrain(name string, opts ...BrainOption) *Brain {
 	}
 	h := hitl.NewDriver(mem, notifyFn)
 
+	g := guardian.NewDriver(mem, cfg.guardianOpts...)
+	r := routing.NewDriver(mem, cfg.routingOpts...)
+	lc := lifecycle.NewDriver(mem, cfg.lifecycleOpts...)
+	br := browser.NewDriver(mem, cfg.browserOpts...)
+
 	connections := []gobot.Connection{mem}
 	connections = append(connections, cfg.extraConns...)
 
-	devices := []gobot.Device{inf, sched, wd, h}
+	devices := []gobot.Device{inf, sched, wd, h, g, r, lc, br}
 	devices = append(devices, cfg.extraDevices...)
 
 	robot := gobot.NewRobot(name,
@@ -153,6 +203,10 @@ func NewBrain(name string, opts ...BrainOption) *Brain {
 		Scheduler: sched,
 		Watchdog:  wd,
 		HITL:      h,
+		Guardian:  g,
+		Routing:   r,
+		Lifecycle: lc,
+		Browser:   br,
 		Robot:     robot,
 	}
 }
